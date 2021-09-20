@@ -21,8 +21,9 @@ impf_bundesland <- impf_kreis %>%
   mutate(Anzahl7 = slider::slide_dbl(Anzahl, mean, .before = 6)) %>% 
   ungroup()
 
+# Plot the last 3 months, highlighting Bavaria and NRW
 plotdat <- impf_bundesland %>% 
-  filter(Impfdatum > Sys.Date() - 90) %>%
+  filter(Impfdatum >= as.Date("2021-07-01")) %>%
   filter(Altersgruppe == "18-59") %>% 
   filter(Impfschutz < 3) %>% 
   mutate(Impfschutz = factor(Impfschutz, levels = 1:2,
@@ -30,7 +31,7 @@ plotdat <- impf_bundesland %>%
   mutate(Bundesland_label = case_when(
     Bundesland_en == "Bavaria" ~ "Bavaria",
     Bundesland_en == "North Rhine-Westphalia" ~ "North Rhine-Westphalia",
-    TRUE ~ "Other Bundesländer"
+    TRUE ~ "Other federal states"
   ))
 
 ggplot(plotdat, aes(x = Impfdatum, y = Anzahl7/1000,
@@ -38,12 +39,15 @@ ggplot(plotdat, aes(x = Impfdatum, y = Anzahl7/1000,
                     colour = Bundesland_label)) +
   geom_vline(xintercept = as.Date("2021-09-14"),
              colour = "grey80") +
-  geom_path(alpha = 0.6, guide = "none") +
+  geom_path(alpha = 0.6, size = 0.9) +
   facet_wrap(vars(Impfschutz), scales = "free_y") +
   labs(
     x = "Date of vaccination",
     y = "Weekly doses (x1000)",
-    colour = ""
+    title = "Covid-19 vaccination by German Fedaral State",
+    subtitle = "Age group 18-59 since 1 July 2021",
+    colour = "",
+    caption = "Source: https://github.com/robert-koch-institut/COVID-19-Impfungen_in_Deutschland"
   ) +
   theme(legend.position = "bottom")
 
