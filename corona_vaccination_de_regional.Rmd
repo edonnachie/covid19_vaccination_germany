@@ -1,0 +1,379 @@
+---
+title: "COVID-19 Vaccination Coverage in Germany"
+subtitle: "Large Area Analysis using Aggregated District-Level Data"
+author: "Ewan Donnachie"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    toc_numbered: yes
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = FALSE,
+                      message = FALSE,
+                      cache = TRUE,
+                      cache.rebuild = TRUE)
+```
+
+
+
+
+
+# Introduction
+
+In comparison with other European countries, Germany has only rudimentary information about the progress of its Covid-19 vaccine programme. Although the Robert Koch Institute will eventually receive a complete record of vaccinations, office-based physicians provide only aggregate information on a daily basis, with the full report submitted with the claims at the end of the quarter [^1], arriving at the RKI with substantial delay.
+
+[^1]: https://www.kbv.de/html/50987.php
+
+The data available on the vaccination programme is therefore limited to the following:
+
+- Age range in three categories (12-17, 18-59, 60+)
+- First dose or completed schedule (the J&J vaccine is counted with the second doses of other vaccines)
+- Location of the vaccination centre or physician (not necessarily the place of vaccination)
+- Vaccine used (available to RKI but not released)
+
+For this reason, Germany is not able to analyse [vaccination status by age group](https://fdebarre.shinyapps.io/ecdc-vaccination/)  or by disrict of residence, as seen for example on the [UK Coronavirus Dashboard](https://coronavirus.data.gov.uk/details/interactive-map/vaccinations).
+
+Attempts have been made to calculate regional vaccination rates. Some municipal areas report vaccination rates daily, and the fedaral state of Baden-Wurtemmberg releases data by district. However, these estimates are only valid if people get vaccinated only within their district of residence. Indeed, a freedom of information request showed that [Freiburg vaccination centre](https://twitter.com/sbamueller/status/1422847468845285381/photo/1) vaccinated many people from the surrounding districts.
+
+Since August 2021, RKI has released [daily vaccination figures at the district level on GitHub](https://github.com/robert-koch-institut/COVID-19-Impfungen_in_Deutschland). Visualisations of this data [are already available online](https://public.flourish.studio/visualisation/6996366/) and show a considerable amount of distortion. Urban districts often have very high proportions of vaccinated people (sometimes approaching 200%), whereas the surrounding rural districts have low proportions.
+
+One simple method of accounting for such distortion is to aggregate the data over a larger area. The German Federal Institute for Research on Building, Urban Affairs and Spatial Development provides a [large-area grouping (Raumordnungsregionen, ROR)](https://www.bbsr.bund.de/BBSR/DE/forschung/raumbeobachtung/Raumabgrenzungen/deutschland/regionen/Raumordnungsregionen/raumordnungsregionen.html), reducing the 401 German districts to 96 regional ROR. In general, the ROR combine urban centres with the surrounding areas of influence. 
+
+The aim of the following analysis is to see how well aggregation of the regional vaccination data by ROR removes distortion and reveals large-area differences in the success of the vaccination programme. I am particularly interested in Bavaria, which has several city districts and is thus most affected by the distortions.
+
+The analysis is purely descriptive in nature. As with the underlying district-level data, the results should be interpreted with caution.
+
+# Data
+
+## BBSR Large Area Regions (Raumordnungsregionen)
+
+The [BBSR](https://www.bbsr.bund.de/BBSR/DE/forschung/raumbeobachtung/Raumabgrenzungen/deutschland/regionen/Raumordnungsregionen/raumordnungsregionen.html) provides a mapping from the district (NUTS-3) level to the large area "Raumordnungsregionen" (ROR). These are similar to but not identical to the NUTS-2 regions.
+
+## Population data
+
+Population data by district was obtained from the German Fedaral Statistics Office (Genesis Table 12411-0018, 31.12.2020) and aggregated to ROR level.
+
+
+## RKI Vaccination Data
+
+The vaccination data are downloaded directly from the [RKI vaccination repository in GitHub](https://github.com/robert-koch-institut/COVID-19-Impfungen_in_Deutschland). Extensive documentation is provided (in German) in the repository's readme file.
+
+```{r dat_vaccination}
+library(tidyverse)
+library(sf)
+
+impf <- readr::read_csv("https://github.com/robert-koch-institut/COVID-19-Impfungen_in_Deutschland/raw/master/Aktuell_Deutschland_Landkreise_COVID-19-Impfungen.csv",
+                        lazy = FALSE) %>% 
+  rename(AGS = LandkreisId_Impfort) %>% 
+  mutate(BundeslandID = substr(AGS, 1, 2)) %>% 
+  left_join(readRDS(here::here("data/metadata/BBSR_ROR.rds")),
+            by = "AGS")
+
+impf_ror <- impf %>% 
+  group_by(BundeslandID, Impfdatum, ROR_ID, ROR, Impfschutz, Altersgruppe) %>% 
+  summarise(Anzahl = sum(Anzahl)) %>% 
+  ungroup() %>% 
+  arrange(ROR, Impfdatum, Impfschutz, Altersgruppe) %>% 
+  group_by(BundeslandID, ROR_ID, ROR, Impfschutz, Altersgruppe) %>% 
+  mutate(Anzahl7 = slider::slide_dbl(Anzahl, sum, .before = 6)) %>% 
+  ungroup()
+
+impf_kreis_gesamt <- impf %>% 
+  filter(Impfschutz != 3) %>% 
+  group_by(BundeslandID, AGS, Kreis_Name, Impfschutz) %>% 
+  summarise(n_impf = sum(Anzahl)) %>% 
+  ungroup() %>% 
+  pivot_wider(names_from = "Impfschutz", values_from = "n_impf") %>% 
+  mutate(d = `1` - `2`)
+
+impf_ror_gesamt <- impf_ror %>% 
+  filter(Impfschutz != 3) %>% 
+  group_by(BundeslandID, ROR, Altersgruppe, Impfschutz) %>% 
+  summarise(n_impf = sum(Anzahl)) %>% 
+  ungroup() %>% 
+  # The inner join gets rid of Altersgruppe = "u" (unknown)    
+  inner_join(readRDS(here::here("data/metadata/BEVOELKERUNG_ROR.rds")),
+                    by = c("ROR", "Altersgruppe")) %>% 
+  mutate(p_impf = 100 * n_impf/Bevoelkerung) %>% 
+  mutate(Impfschutz = factor(
+    Impfschutz,
+    levels = 1:2,
+    labels = c("First Dose",
+               "Completed schedule")
+    ))
+
+impf_ror_gesamt_18plus <- impf_ror_gesamt %>% 
+  group_by(BundeslandID, ROR, ROR_ID, Impfschutz) %>% 
+  summarise(
+    n_impf = sum(n_impf),
+    Bevoelkerung = sum(Bevoelkerung),
+    p_impf = 100 * n_impf/Bevoelkerung
+    ) %>% 
+  ungroup() 
+
+```
+
+## Cartographic data
+
+A spatial features file for the German districts was downloaded from [GADM](https://gadm.org/maps/DEU.html) and aggregated to the level of the ROR. The data is freely-available for academic and non-commercial use.
+
+Note: The district of Göttingen appears as a "hole" in the ROR of the same name. The two neighbouring districts of Northeim and Holzminden, belonging to the same ROR, are displayed correctly. The appears to be a bug when combining the regions using the `sf` package for R. The `ms_disolve` function from the `rmapshaper` may solve this problem, but is difficult to get working.
+
+
+```{r mapdat}
+mapdat <- readRDS(here::here("data/metadata/gadm36_DEU_2_sf.rds")) %>% 
+  rename(AGS = CC_2) %>% 
+  inner_join(readRDS(here::here("data/metadata/BBSR_ROR.rds")),
+             by = "AGS") %>% 
+  arrange(ROR_ID, AGS) %>% 
+  group_by(ROR_ID) %>%
+  summarise()
+```
+
+
+# Results
+
+```{r fn_plot_impf_ror}
+# Function to plot the choropleth maps
+plot_impf_ror <- function(dat) {
+  
+  mapdat_bundesland <- dat %>% 
+    group_by(BundeslandID) %>% 
+    summarise()
+  
+  dat %>% 
+    mutate(p_impf = ifelse(p_impf > 100, 100, p_impf)) %>% 
+    ggplot() +
+      geom_sf(aes(fill = p_impf), colour = "grey60") +
+      geom_sf(colour = "grey90",
+              fill = "transparent",
+              data = mapdat_bundesland) +
+      coord_sf() +
+      theme_void(base_size = 10) +
+      scale_fill_viridis_c() +
+      facet_wrap(vars(Impfschutz)) +
+      theme(
+        strip.text = element_text(size = rel(1.2), margin = margin(6, 6, 6, 6)),
+        plot.caption = element_text(hjust = 0)
+      )
+}
+```
+
+## Age 18+ {.tabset .tabset-fade}
+
+### Germany
+
+```{r}
+inner_join(mapdat,
+           impf_ror_gesamt_18plus,
+           by = "ROR_ID") %>% 
+  filter(Impfschutz != "Auffrischimpfung") %>% 
+  plot_impf_ror()  +
+  labs(
+    title = "Vaccination Coverage in the Population",
+    subtitle = "Age 18+, by large area unit",
+    fill = "Proportion (%)",
+    caption = "Data: github.com/robert-koch-institut/COVID-19-Impfungen_in_Deutschland\nAnalysis: github.com/edonnachie/covid19_vaccination_germany"
+  )
+ggsave(here::here("figures/corona_vaccination_germany_ror_18plus.png"),
+       width = 18, height = 12, units = "cm", dpi = 300,
+       device = ragg::agg_png())
+```
+
+
+### Bavaria
+
+```{r}
+inner_join(mapdat,
+           impf_ror_gesamt_18plus,
+           by = "ROR_ID") %>% 
+  filter(BundeslandID == "09") %>% 
+  filter(Impfschutz != "Auffrischimpfung") %>% 
+  plot_impf_ror()  +
+  labs(
+    title = "Vaccination Coverage in the Population",
+    subtitle = "Age 18+, by large area unit",
+    fill = "Proportion (%)",
+    caption = "Source: RKI"
+  )
+```
+
+
+### Table
+
+```{r}
+impf_ror_gesamt_18plus %>%
+  select(BundeslandID, ROR, Impfschutz, p_impf) %>%
+  pivot_wider(names_from = "Impfschutz",
+              values_from = "p_impf") %>% 
+  mutate(`Difference First dose - Completed` = `First Dose` - `Completed schedule`) %>% 
+  arrange(`First Dose`) %>% 
+  knitr::kable(linesep = "", digits = 1) %>% 
+  kableExtra::kable_styling(bootstrap_options = c("striped"))
+```
+
+
+## Age 60 + {.tabset .tabset-fade}
+
+### Germany
+
+```{r}
+inner_join(mapdat,
+           impf_ror_gesamt,
+           by = "ROR_ID") %>% 
+  filter(Altersgruppe == "60+") %>%
+  filter(Impfschutz != "Booster") %>% 
+  plot_impf_ror()  +
+  labs(
+    title = "Vaccination Coverage in the Population",
+    subtitle = "Age 60+, by large area unit",
+    fill = "Proportion (%)",
+    caption = "Data: github.com/robert-koch-institut/COVID-19-Impfungen_in_Deutschland\nAnalysis: github.com/edonnachie/covid19_vaccination_germany"
+  )
+ggsave(here::here("figures/corona_vaccination_germany_ror_60plus.png"),
+       width = 18, height = 12, units = "cm", dpi = 300,
+       device = ragg::agg_png())
+```
+
+
+### Bavaria
+
+```{r}
+inner_join(mapdat,
+           impf_ror_gesamt,
+           by = "ROR_ID") %>% 
+  filter(BundeslandID == "09") %>% 
+  filter(Altersgruppe == "60+") %>%
+  filter(Impfschutz != "Auffrischimpfung") %>% 
+  plot_impf_ror()  +
+  labs(
+    title = "Vaccination Coverage in the Population",
+    subtitle = "Age 60+, by large area unit",
+    fill = "Proportion (%)",
+    caption = "Data: github.com/robert-koch-institut/COVID-19-Impfungen_in_Deutschland\nAnalysis: github.com/edonnachie/covid19_vaccination_germany"
+  )
+```
+
+### Table
+
+```{r}
+impf_ror_gesamt %>%
+  filter(Altersgruppe == "60+") %>% 
+  select(BundeslandID, Altersgruppe, ROR, Impfschutz, p_impf)%>%
+  pivot_wider(names_from = "Impfschutz",
+              values_from = "p_impf") %>% 
+  arrange(`First Dose`) %>% 
+  knitr::kable(linesep = "", digits = 1) %>% 
+  kableExtra::kable_styling(bootstrap_options = c("striped"))
+```
+
+
+
+
+## Alter 18-59 {.tabset .tabset-fade}
+
+### Deutschland
+
+```{r}
+inner_join(mapdat,
+           impf_ror_gesamt,
+           by = "ROR_ID") %>% 
+  filter(Altersgruppe == "18-59") %>%
+  filter(Impfschutz != "Booster") %>% 
+  plot_impf_ror()  +
+  labs(
+    title = "Vaccination Coverage in the Population",
+    subtitle = "Age 18-59, by large area unit",
+    fill = "Proportion (%)",
+    caption = "Data: github.com/robert-koch-institut/COVID-19-Impfungen_in_Deutschland\nAnalysis: github.com/edonnachie/covid19_vaccination_germany"
+  )
+ggsave(here::here("figures/corona_vaccination_germany_ror_18-59.png"),
+       width = 18, height = 12, units = "cm", dpi = 300,
+       device = ragg::agg_png())
+```
+
+
+### Bavaria
+
+```{r}
+inner_join(mapdat,
+           impf_ror_gesamt,
+           by = "ROR_ID") %>% 
+  filter(BundeslandID == "09") %>% 
+  filter(Altersgruppe == "18-59") %>%
+  filter(Impfschutz != "Booster") %>% 
+  plot_impf_ror()  +
+  labs(
+    title = "Vaccination Coverage in the Population",
+    subtitle = "Age 18-59, by large area unit",
+    fill = "Proportion (%)",
+    caption = "Data: github.com/robert-koch-institut/COVID-19-Impfungen_in_Deutschland\nAnalysis: github.com/edonnachie/covid19_vaccination_germany"
+  )
+
+```
+
+### Table
+
+```{r}
+impf_ror_gesamt %>%
+  filter(Altersgruppe == "18-59") %>% 
+  select(BundeslandID, Altersgruppe, ROR, Impfschutz, p_impf) %>%
+  pivot_wider(names_from = "Impfschutz",
+              values_from = "p_impf") %>% 
+  arrange(`First Dose`) %>%
+  knitr::kable(linesep = "", digits = 1) %>% 
+  kableExtra::kable_styling(bootstrap_options = c("striped"))
+```
+
+
+## Difference between Proportion with First Dose and Completed Schedule
+
+```{r}
+impf_ror_gesamt_18plus %>%
+  select(BundeslandID, ROR_ID, Impfschutz, p_impf) %>%
+  pivot_wider(names_from = "Impfschutz",
+              values_from = "p_impf") %>% 
+  mutate(d = `First Dose` - `Completed schedule`) %>%
+  inner_join(mapdat, ., by = "ROR_ID") %>% 
+  ggplot() +
+      geom_sf(aes(fill = d), colour = "grey60") +
+      coord_sf() +
+      theme_void(base_size = 10) +
+      scale_fill_viridis_c() +
+  labs(
+    title = "Difference in Proportion between First Dose and Completed Schedule",
+    subtitle = paste("+ve means more first doses than completed schedules",
+                     "-ve means more completed schedules than first doses",
+                     sep = "\n"),
+    fill = "Difference (pp)"
+  )
+```
+
+
+# Discussion
+
+Large area analysis of the Germany Coronavirus vaccination data shows substantial differences in regional vaccination coverage. In Bavara, for example, coverage ranges between about 60% and 73%. The regional pattern is similar to that found with the [measles vaccination](https://www.versorgungsatlas.de/themen/versorgungsprozesse?tab=1&uid=43&cHash=685f2d3a5bf89041088e9345a552ec7c), with regions in southern Bavaria having a lower proportion of vaccinated people.
+
+## Limitations of the Data
+
+Despite the large area aggregation, there are regions with vaccination coverage greater than 100%. This suggests that "vaccination tourism" may still be present. Alternatively, data errors cannot be excluded.
+
+Comparison of the proportion from each large area unit with first dose and with completed schedule shows that some areas have administered fewer first doses than final doses. There are three possible reasons for this:
+
+1. J&J vaccines are counted only under "Completed Schedule", so those given this vaccine are not counted under "First dose". However, this has played a fairly minor role in the vaccination campaign (4.5 million doses out of 125 million doses administered).
+
+2. People receiving their first and second doses in different areas (e.g. vaccination centre followed by GP). However, the large area aggregation should have minimised this effect.
+
+3. Data error (first doses counted as a second dose)
+
+
+## Conclusion
+
+While the available vaccination data do reveal some potentially important large-area differences in vaccination coverage, data quality is problematic. Detailed individual-level data, including place of residence, will only be available to RKI with a delay, making it unsuitable for planning purposes.
