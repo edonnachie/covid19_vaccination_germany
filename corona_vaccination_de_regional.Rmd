@@ -184,7 +184,7 @@ inner_join(mapdat,
   )
 ggsave(here::here("figures/corona_vaccination_germany_ror_18plus.png"),
        width = 18, height = 12, units = "cm", dpi = 300,
-       device = ragg::agg_png())
+       device = ragg::agg_png(), bg = "white")
 ```
 
 
@@ -239,7 +239,7 @@ inner_join(mapdat,
   )
 ggsave(here::here("figures/corona_vaccination_germany_ror_60plus.png"),
        width = 18, height = 12, units = "cm", dpi = 300,
-       device = ragg::agg_png())
+       device = ragg::agg_png(), bg = "white")
 ```
 
 
@@ -296,7 +296,7 @@ inner_join(mapdat,
   )
 ggsave(here::here("figures/corona_vaccination_germany_ror_18-59.png"),
        width = 18, height = 12, units = "cm", dpi = 300,
-       device = ragg::agg_png())
+       device = ragg::agg_png(), bg = "white")
 ```
 
 
