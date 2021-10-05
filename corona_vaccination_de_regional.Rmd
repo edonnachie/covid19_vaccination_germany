@@ -18,7 +18,7 @@ knitr::opts_chunk$set(echo = TRUE,
                       warning = FALSE,
                       message = FALSE,
                       cache = TRUE,
-                      cache.rebuild = TRUE)
+                      cache.rebuild = F)
 ```
 
 
@@ -56,6 +56,11 @@ The analysis is purely descriptive in nature. As with the underlying district-le
 
 The [BBSR](https://www.bbsr.bund.de/BBSR/DE/forschung/raumbeobachtung/Raumabgrenzungen/deutschland/regionen/Raumordnungsregionen/raumordnungsregionen.html) provides a mapping from the district (NUTS-3) level to the large area "Raumordnungsregionen" (ROR). These are similar to but not identical to the NUTS-2 regions.
 
+```{r}
+bbsr_ror <- readRDS(here::here("data/metadata/BBSR_ROR.rds"))
+ror_bayern <- bbsr_ror$ROR_ID[substr(bbsr_ror$AGS, 1, 2) == "09"]
+```
+
 ## Population data
 
 Population data by district was obtained from the German Fedaral Statistics Office (Genesis Table 12411-0018, 31.12.2020) and aggregated to ROR level.
@@ -73,21 +78,21 @@ impf <- readr::read_csv("https://github.com/robert-koch-institut/COVID-19-Impfun
                         lazy = FALSE) %>% 
   rename(AGS = LandkreisId_Impfort) %>% 
   mutate(BundeslandID = substr(AGS, 1, 2)) %>% 
+  filter(Impfschutz != 3) %>% 
   left_join(readRDS(here::here("data/metadata/BBSR_ROR.rds")),
             by = "AGS")
 
 impf_ror <- impf %>% 
-  group_by(BundeslandID, Impfdatum, ROR_ID, ROR, Impfschutz, Altersgruppe) %>% 
+  group_by(Impfdatum, ROR_ID, ROR, Impfschutz, Altersgruppe) %>% 
   summarise(Anzahl = sum(Anzahl)) %>% 
   ungroup() %>% 
   arrange(ROR, Impfdatum, Impfschutz, Altersgruppe) %>% 
-  group_by(BundeslandID, ROR_ID, ROR, Impfschutz, Altersgruppe) %>% 
+  group_by(ROR_ID, ROR, Impfschutz, Altersgruppe) %>% 
   mutate(Anzahl7 = slider::slide_dbl(Anzahl, sum, .before = 6)) %>% 
   ungroup()
 
 impf_ror_gesamt <- impf_ror %>% 
-  filter(Impfschutz != 3) %>% 
-  group_by(BundeslandID, ROR, Altersgruppe, Impfschutz) %>% 
+  group_by(ROR, Altersgruppe, Impfschutz) %>% 
   summarise(n_impf = sum(Anzahl)) %>% 
   ungroup() %>% 
   # The inner join gets rid of Altersgruppe = "u" (unknown)    
@@ -102,7 +107,7 @@ impf_ror_gesamt <- impf_ror %>%
     ))
 
 impf_ror_gesamt_18plus <- impf_ror_gesamt %>% 
-  group_by(BundeslandID, ROR, ROR_ID, Impfschutz) %>% 
+  group_by(ROR, ROR_ID, Impfschutz) %>% 
   summarise(
     n_impf = sum(n_impf),
     Bevoelkerung = sum(Bevoelkerung),
@@ -120,12 +125,19 @@ Note: The district of Göttingen appears as a "hole" in the ROR of the same name
 
 
 ```{r mapdat}
-mapdat <- readRDS(here::here("data/metadata/gadm36_DEU_2_sf.rds")) %>% 
+mapdat_kreis <- readRDS(here::here("data/metadata/gadm36_DEU_2_sf.rds"))
+
+mapdat <- mapdat_kreis %>% 
   rename(AGS = CC_2) %>% 
   inner_join(readRDS(here::here("data/metadata/BBSR_ROR.rds")),
              by = "AGS") %>% 
   arrange(ROR_ID, AGS) %>% 
   group_by(ROR_ID) %>%
+  summarise()
+
+
+mapdat_bundesland <- mapdat_kreis %>% 
+  group_by(NAME_1) %>% 
   summarise()
 ```
 
@@ -134,19 +146,11 @@ mapdat <- readRDS(here::here("data/metadata/gadm36_DEU_2_sf.rds")) %>%
 
 ```{r fn_plot_impf_ror}
 # Function to plot the choropleth maps
-plot_impf_ror <- function(dat) {
-  
-  mapdat_bundesland <- dat %>% 
-    group_by(BundeslandID) %>% 
-    summarise()
-  
-  dat %>% 
+plot_impf_ror <- function(dat, bund = TRUE) {
+  p <- dat %>% 
     mutate(p_impf = ifelse(p_impf > 100, 100, p_impf)) %>% 
     ggplot() +
       geom_sf(aes(fill = p_impf), colour = "grey60") +
-      geom_sf(colour = "grey90",
-              fill = "transparent",
-              data = mapdat_bundesland) +
       coord_sf() +
       theme_void(base_size = 10) +
       scale_fill_viridis_c() +
@@ -155,6 +159,14 @@ plot_impf_ror <- function(dat) {
         strip.text = element_text(size = rel(1.2), margin = margin(6, 6, 6, 6)),
         plot.caption = element_text(hjust = 0)
       )
+  
+  if (bund) {
+    p <- p + 
+      geom_sf(colour = "grey90",
+              fill = "transparent",
+              data = mapdat_bundesland)
+  }
+  p
 }
 ```
 
@@ -166,7 +178,6 @@ plot_impf_ror <- function(dat) {
 inner_join(mapdat,
            impf_ror_gesamt_18plus,
            by = "ROR_ID") %>% 
-  filter(Impfschutz != "Auffrischimpfung") %>% 
   plot_impf_ror()  +
   labs(
     title = "Vaccination Coverage in the Population",
@@ -174,6 +185,7 @@ inner_join(mapdat,
     fill = "Proportion (%)",
     caption = "Data: github.com/robert-koch-institut/COVID-19-Impfungen_in_Deutschland\nAnalysis: github.com/edonnachie/covid19_vaccination_germany"
   )
+
 ggsave(here::here("figures/corona_vaccination_germany_ror_18plus.png"),
        width = 18, height = 12, units = "cm", dpi = 300,
        device = ragg::agg_png(), bg = "white")
@@ -186,14 +198,14 @@ ggsave(here::here("figures/corona_vaccination_germany_ror_18plus.png"),
 inner_join(mapdat,
            impf_ror_gesamt_18plus,
            by = "ROR_ID") %>% 
-  filter(BundeslandID == "09") %>% 
+  filter(ROR_ID %in% ror_bayern) %>% 
   filter(Impfschutz != "Auffrischimpfung") %>% 
-  plot_impf_ror()  +
+  plot_impf_ror(bund=FALSE)  +
   labs(
     title = "Vaccination Coverage in the Population",
     subtitle = "Age 18+, by large area unit",
     fill = "Proportion (%)",
-    caption = "Source: RKI"
+    caption = "Data: github.com/robert-koch-institut/COVID-19-Impfungen_in_Deutschland\nAnalysis: github.com/edonnachie/covid19_vaccination_germany"
   )
 ```
 
@@ -202,7 +214,7 @@ inner_join(mapdat,
 
 ```{r}
 impf_ror_gesamt_18plus %>%
-  select(BundeslandID, ROR, Impfschutz, p_impf) %>%
+  select(ROR, Impfschutz, p_impf) %>%
   pivot_wider(names_from = "Impfschutz",
               values_from = "p_impf") %>% 
   mutate(`Difference First dose - Completed` = `First Dose` - `Completed schedule`) %>% 
@@ -221,7 +233,6 @@ inner_join(mapdat,
            impf_ror_gesamt,
            by = "ROR_ID") %>% 
   filter(Altersgruppe == "60+") %>%
-  filter(Impfschutz != "Booster") %>% 
   plot_impf_ror()  +
   labs(
     title = "Vaccination Coverage in the Population",
@@ -241,10 +252,10 @@ ggsave(here::here("figures/corona_vaccination_germany_ror_60plus.png"),
 inner_join(mapdat,
            impf_ror_gesamt,
            by = "ROR_ID") %>% 
-  filter(BundeslandID == "09") %>% 
+  filter(ROR_ID %in% ror_bayern) %>% 
   filter(Altersgruppe == "60+") %>%
   filter(Impfschutz != "Auffrischimpfung") %>% 
-  plot_impf_ror()  +
+  plot_impf_ror(bund = FALSE)  +
   labs(
     title = "Vaccination Coverage in the Population",
     subtitle = "Age 60+, by large area unit",
@@ -258,7 +269,7 @@ inner_join(mapdat,
 ```{r}
 impf_ror_gesamt %>%
   filter(Altersgruppe == "60+") %>% 
-  select(BundeslandID, Altersgruppe, ROR, Impfschutz, p_impf)%>%
+  select(Altersgruppe, ROR, Impfschutz, p_impf)%>%
   pivot_wider(names_from = "Impfschutz",
               values_from = "p_impf") %>% 
   arrange(`First Dose`) %>% 
@@ -278,7 +289,6 @@ inner_join(mapdat,
            impf_ror_gesamt,
            by = "ROR_ID") %>% 
   filter(Altersgruppe == "18-59") %>%
-  filter(Impfschutz != "Booster") %>% 
   plot_impf_ror()  +
   labs(
     title = "Vaccination Coverage in the Population",
@@ -298,10 +308,9 @@ ggsave(here::here("figures/corona_vaccination_germany_ror_18-59.png"),
 inner_join(mapdat,
            impf_ror_gesamt,
            by = "ROR_ID") %>% 
-  filter(BundeslandID == "09") %>% 
+  filter(ROR_ID %in% ror_bayern) %>% 
   filter(Altersgruppe == "18-59") %>%
-  filter(Impfschutz != "Booster") %>% 
-  plot_impf_ror()  +
+  plot_impf_ror(bund = FALSE)  +
   labs(
     title = "Vaccination Coverage in the Population",
     subtitle = "Age 18-59, by large area unit",
@@ -316,7 +325,7 @@ inner_join(mapdat,
 ```{r}
 impf_ror_gesamt %>%
   filter(Altersgruppe == "18-59") %>% 
-  select(BundeslandID, Altersgruppe, ROR, Impfschutz, p_impf) %>%
+  select(Altersgruppe, ROR, Impfschutz, p_impf) %>%
   pivot_wider(names_from = "Impfschutz",
               values_from = "p_impf") %>% 
   arrange(`First Dose`) %>%
@@ -329,7 +338,7 @@ impf_ror_gesamt %>%
 
 ```{r}
 impf_ror_gesamt_18plus %>%
-  select(BundeslandID, ROR_ID, Impfschutz, p_impf) %>%
+  select(ROR_ID, Impfschutz, p_impf) %>%
   pivot_wider(names_from = "Impfschutz",
               values_from = "p_impf") %>% 
   mutate(d = `First Dose` - `Completed schedule`) %>%
