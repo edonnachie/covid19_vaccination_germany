@@ -85,14 +85,6 @@ impf_ror <- impf %>%
   mutate(Anzahl7 = slider::slide_dbl(Anzahl, sum, .before = 6)) %>% 
   ungroup()
 
-impf_kreis_gesamt <- impf %>% 
-  filter(Impfschutz != 3) %>% 
-  group_by(BundeslandID, AGS, Kreis_Name, Impfschutz) %>% 
-  summarise(n_impf = sum(Anzahl)) %>% 
-  ungroup() %>% 
-  pivot_wider(names_from = "Impfschutz", values_from = "n_impf") %>% 
-  mutate(d = `1` - `2`)
-
 impf_ror_gesamt <- impf_ror %>% 
   filter(Impfschutz != 3) %>% 
   group_by(BundeslandID, ROR, Altersgruppe, Impfschutz) %>% 
@@ -359,7 +351,7 @@ impf_ror_gesamt_18plus %>%
 
 # Discussion
 
-Large area analysis of the Germany Coronavirus vaccination data shows substantial differences in regional vaccination coverage. In Bavara, for example, coverage ranges between about 60% and 73%. The regional pattern is similar to that found with the [measles vaccination](https://www.versorgungsatlas.de/themen/versorgungsprozesse?tab=1&uid=43&cHash=685f2d3a5bf89041088e9345a552ec7c), with regions in southern Bavaria having a lower proportion of vaccinated people.
+Large area analysis of the Germany Coronavirus vaccination data shows substantial differences in regional vaccination coverage. In Bavaria, for example, coverage ranges between about 60% and 73%. The regional pattern is similar to that found with the [measles vaccination](https://www.versorgungsatlas.de/themen/versorgungsprozesse?tab=1&uid=43&cHash=685f2d3a5bf89041088e9345a552ec7c), with regions in southern Bavaria having a lower proportion of vaccinated people.
 
 ## Limitations of the Data
 
@@ -372,6 +364,9 @@ Comparison of the proportion from each large area unit with first dose and with 
 2. People receiving their first and second doses in different areas (e.g. vaccination centre followed by GP). However, the large area aggregation should have minimised this effect.
 
 3. Data error (first doses counted as a second dose)
+
+
+To account for these issues, RKI publishes corrected data at the level of federal state. It is unclear why the district level data is not also corrected.
 
 
 ## Conclusion
