@@ -18,7 +18,7 @@ knitr::opts_chunk$set(echo = TRUE,
                       warning = FALSE,
                       message = FALSE,
                       cache = TRUE,
-                      cache.rebuild = F)
+                      cache.rebuild = TRUE)
 ```
 
 
@@ -364,15 +364,17 @@ Large area analysis of the Germany Coronavirus vaccination data shows substantia
 
 ## Limitations of the Data
 
-Despite the large area aggregation, there are regions with vaccination coverage greater than 100%. This suggests that "vaccination tourism" may still be present. Alternatively, data errors cannot be excluded.
+Despite the large area aggregation, there are regions with vaccination coverage greater than 100%. This suggests that "vaccination tourism" may still be present. Baden-Württemberg is particularly noticeable: The City of Ulm has a "coverage" of >220%, whereas the surrounding units - even at the large area scale - have low "coverage". Alternatively, data errors cannot be excluded.
 
 Comparison of the proportion from each large area unit with first dose and with completed schedule shows that some areas have administered fewer first doses than final doses. There are three possible reasons for this:
 
 1. J&J vaccines are counted only under "Completed Schedule", so those given this vaccine are not counted under "First dose". However, this has played a fairly minor role in the vaccination campaign (4.5 million doses out of 125 million doses administered).
 
-2. People receiving their first and second doses in different areas (e.g. vaccination centre followed by GP). However, the large area aggregation should have minimised this effect.
+2. Similarly, individuals with a previous SARS2-Cov19 infection are given only one vaccination and counted under "Completed Schedule".
 
-3. Data error (first doses counted as a second dose)
+3. People receiving their first and second doses in different areas (e.g. vaccination centre followed by GP). However, the large area aggregation should have minimised this effect.
+
+4. Data error (first doses counted as a second dose)
 
 
 To account for these issues, RKI publishes corrected data at the level of federal state. It is unclear why the district level data is not also corrected.
