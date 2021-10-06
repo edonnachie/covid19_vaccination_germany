@@ -20,8 +20,14 @@ jobs:
       #     input_file: corona_vaccination_de_regional.Rmd
       #     output_format: html_document
     - uses: actions/checkout@master
-    - name: copy file
-      uses: canastro/copy-file-action@master
+    - name: Copy and commit report html
+      run: |
+        cp "corona_vaccination_de_regional.html" "docs/corona_vaccination_de_regional.html"
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add docs/corona_vaccination_de_regional.html
+        git commit -m "Deploy report"
+    - name: Push changes
+      uses: ad-m/github-push-action@master
       with:
-        source: "corona_vaccination_de_regional.Rmd"
-        target: "docs/corona_vaccination_de_regional.Rmd"
+        github_token: ${{ secrets.GITHUB_TOKEN }}
